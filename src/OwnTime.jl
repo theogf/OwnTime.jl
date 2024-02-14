@@ -5,22 +5,11 @@ export framecounts, frametotal, frames
 
 using Printf
 using Profile
+using StatsBase: countmap
 
 const StackFrame = StackTraces.StackFrame
 
-function countmap(iter)
-    result = Dict{eltype(iter), Int64}()
-    for i in iter
-        if haskey(result, i)
-            result[i] += 1
-        else
-            result[i] = 1
-        end
-    end
-    result
-end
-
-mutable struct OwnTimeState
+struct OwnTimeState
     lookups :: Dict{UInt64, Vector{StackFrame}}
 end
 
@@ -33,9 +22,7 @@ OwnTime has an internal cache for performance. Clear that cache.
 
 See also: [`Profile.clear`](@ref)
 """
-function clear()
-    state.lookups = Dict{UInt64, Vector{StackFrame}}()
-end
+clear() = empty!(state.lookups)
 
 """
     fetch()
@@ -75,7 +62,7 @@ function backtraces(;warn_on_full_buffer=true)
     end
     bts = Vector{UInt64}[]
     i = 1
-    for j in 1:length(profile_pointers)
+    for j in eachindex(profile_pointers)
         # 0 is a sentinel value that indicates the start of a new backtrace.
         # See the source code for `tree!` in Julia's Profile package.
         if profile_pointers[j] == 0
@@ -120,7 +107,7 @@ end
 
 function stacktraces(backtraces)
     map(backtraces) do backtrace
-        filter(reduce(vcat, lookup.(backtrace))) do stackframe
+        filter(mapreduce(lookup, vcat, backtrace)) do stackframe
             stackframe.from_c == false
         end
     end
@@ -135,9 +122,9 @@ framecounts(fcs::FrameCounts) = fcs.counts
 
 frametotal(fcs::FrameCounts) = fcs.total
 
-frames(fcs::FrameCounts) = map(fcs -> fcs.first, fcs.counts)
+frames(fcs::FrameCounts) = map(first, fcs.counts)
 
-Base.getindex(fcs::FrameCounts, i) = framecounts(fcs)[i]
+Base.getindex(fcs::FrameCounts, i) = getindex(framecounts(fcs), i)
 Base.iterate(fcs::FrameCounts) = iterate(framecounts(fcs))
 Base.iterate(fcs::FrameCounts, s) = iterate(framecounts(fcs), s)
 Base.length(fcs::FrameCounts) = length(framecounts(fcs))
@@ -174,8 +161,8 @@ function owntime(stacktraces; stackframe_filter=stackframe -> true)
         filter(stackframe_filter, stackframes)
     end
     nonempty_stacktraces = filter(!isempty, filtered_stacktraces)
-    framecounts = countmap(reduce(vcat, first.(nonempty_stacktraces), init=StackFrame[]))
-    FrameCounts(sort(collect(framecounts), by=pair -> pair.second, rev=true), length(stacktraces))
+    framecounts = countmap(mapreduce(first, vcat, nonempty_stacktraces, init=StackFrame[]))
+    FrameCounts(sort(collect(framecounts), by=last, rev=true), length(stacktraces))
 end
 
 """
@@ -200,8 +187,8 @@ function totaltime(stacktraces; stackframe_filter=stackframe -> true)
     filtered_stacktraces = map(stacktraces) do stackframes
         filter(stackframe_filter, stackframes)
     end
-    framecounts = countmap(reduce(vcat, collect.(unique.(filtered_stacktraces)), init=StackFrame[]))
-    FrameCounts(sort(collect(framecounts), by=pair -> pair.second, rev=true), length(stacktraces))
+    framecounts = countmap(mapreduce(unique, vcat, filtered_stacktraces, init=StackFrame[]))
+    FrameCounts(sort(collect(framecounts), by=last, srev=true), length(stacktraces))
 end
 
 """
